@@ -1,15 +1,20 @@
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy import create_engine
+from sqlalchemy.orm import declarative_base, sessionmaker
+from backend.app.core.config import settings
 
-from app.core.config import settings
+connect_args = {}
+if settings.DATABASE_URL.startswith("sqlite"):
+    connect_args = {"check_same_thread": False}
 
-engine = create_engine(settings.database_url)
+engine = create_engine(
+    settings.DATABASE_URL,
+    connect_args=connect_args,
+    pool_pre_ping=True
+)
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-
-class Base(DeclarativeBase):
-    """Shared declarative base for future SQLAlchemy models."""
-
+Base = declarative_base()
 
 def get_db():
     db = SessionLocal()
@@ -17,13 +22,3 @@ def get_db():
         yield db
     finally:
         db.close()
-
-
-def check_database_connection() -> bool:
-    """Run a trivial query to verify the database is reachable."""
-    try:
-        with engine.connect() as connection:
-            connection.execute(text("SELECT 1"))
-        return True
-    except Exception:
-        return False

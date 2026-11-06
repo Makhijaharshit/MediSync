@@ -1,47 +1,63 @@
-import logging
+import os
+import sys
+
+# Configure PaddleOCR cache paths inside project root before any dependencies load
+_project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+os.environ.setdefault("PADDLE_PDX_CACHE_HOME", os.path.join(_project_root, ".paddlex"))
+os.environ.setdefault("PADDLE_HOME", os.path.join(_project_root, ".paddle"))
+os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
+os.makedirs(os.environ["PADDLE_PDX_CACHE_HOME"], exist_ok=True)
+os.makedirs(os.environ["PADDLE_HOME"], exist_ok=True)
+
 from contextlib import asynccontextmanager
-
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import text
-from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import Session
-
-from app.core.config import settings
-from app.core.database import check_database_connection, get_db
-
-logger = logging.getLogger("medsync")
-
+from backend.app.core.config import settings
+from backend.app.core.database import engine, Base, SessionLocal
+from backend.app.db.seed import init_db
+from backend.app.routers import auth, documents, timeline, emergency, doctor, audit
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if check_database_connection():
-        logger.info("Database connection verified on startup.")
-    else:
-        logger.warning("Could not connect to the database on startup.")
+    # Initialize database tables and seed single admin account into PostgreSQL
+    init_db()
     yield
 
+app = FastAPI(
+    title=settings.PROJECT_NAME,
+    version=settings.VERSION,
+    lifespan=lifespan,
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
+)
 
-app = FastAPI(title="MedSync API", lifespan=lifespan)
-
+# CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Include Routers
+app.include_router(auth.router, prefix=settings.API_V1_STR)
+app.include_router(documents.router, prefix=settings.API_V1_STR)
+app.include_router(timeline.router, prefix=settings.API_V1_STR)
+app.include_router(emergency.router, prefix=settings.API_V1_STR)
+app.include_router(doctor.router, prefix=settings.API_V1_STR)
+app.include_router(audit.router, prefix=settings.API_V1_STR)
+
+@app.get("/")
+def root():
+    return {
+        "status": "healthy",
+        "service": "MedSync Clinical Platform API",
+        "version": settings.VERSION,
+        "docs": "/api/docs"
+    }
 
 @app.get("/health")
-def health():
+def health_check():
     return {"status": "ok"}
-
-
-@app.get("/health/db")
-def health_db(db: Session = Depends(get_db)):
-    try:
-        db.execute(text("SELECT 1"))
-    except OperationalError as exc:
-        raise HTTPException(status_code=503, detail="database unreachable") from exc
-    return {"status": "ok", "database": "connected"}
